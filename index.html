@@ -125,6 +125,10 @@
 		let PLACES = [];
 		let surchargeById = new Map();
 		let VISIBLE_SUGGESTIONS = [];
+		let PLACES_SORTED = [];
+		let PLACES_SORTED_WITH_NORM = [];
+		let lastTerm = "";
+		let lastSuggestionKeys = "";
 
 		const input = document.getElementById("placeInput");
 		const dataList = document.getElementById("places");
@@ -139,18 +143,22 @@
 		function renderDataList(filterTerm = "") {
 			const frag = document.createDocumentFragment();
 			const term = normalize(filterTerm);
-			let list = PLACES.slice().sort((a, b) => a.name.localeCompare(b.name, "it"));
-			if (term) {
+			let list;
+			if (!term) {
+				list = PLACES_SORTED_WITH_NORM;
+			} else {
 				const startsWith = [];
 				const contains = [];
-				for (const p of list) {
-					const n = normalize(p.name);
-					if (n.startsWith(term)) startsWith.push(p);
-					else if (n.includes(term)) contains.push(p);
+				for (const p of PLACES_SORTED_WITH_NORM) {
+					if (p.normName.startsWith(term)) startsWith.push(p);
+					else if (p.normName.includes(term)) contains.push(p);
 				}
-				list = [...startsWith, ...contains];
+				list = startsWith.concat(contains);
 			}
-			VISIBLE_SUGGESTIONS = list.slice(0, 100);
+			VISIBLE_SUGGESTIONS = list.slice(0, 50);
+			const key = VISIBLE_SUGGESTIONS.map(p => p.name).join("|") + "#" + term;
+			if (key === lastSuggestionKeys) return; // evita re-render inutile
+			lastSuggestionKeys = key;
 			VISIBLE_SUGGESTIONS.forEach(p => {
 				const opt = document.createElement("option");
 				opt.value = p.name;
@@ -163,7 +171,8 @@
 		function findPlaceByName(name) {
 			const target = normalize(name);
 			if (!target) return null;
-			return PLACES.find(p => normalize(p.name) === target) || null;
+			const found = PLACES_SORTED_WITH_NORM.find(p => p.normName === target);
+			return found || null;
 		}
 
 		function updateResult(placeName) {
@@ -222,14 +231,23 @@
 				];
 			}
 			surchargeById = new Map(SURCHARGES.map(s => [s.id, s]));
-			PLACES = PLACES.slice().sort((a, b) => a.name.localeCompare(b.name, "it"));
+			PLACES_SORTED = PLACES.slice().sort((a, b) => a.name.localeCompare(b.name, "it"));
+			PLACES_SORTED_WITH_NORM = PLACES_SORTED.map(p => ({ ...p, normName: normalize(p.name) }));
 			renderDataList("");
 		}
 
 		// Eventi
 		checkBtn.addEventListener("click", () => updateResult(input.value));
 		input.addEventListener("change", () => updateResult(input.value));
-		input.addEventListener("input", () => { renderDataList(input.value); updateResult(input.value); });
+		function debounce(fn, ms) {
+			let t;
+			return (...args) => {
+				clearTimeout(t);
+				t = setTimeout(() => fn(...args), ms);
+			};
+		}
+		const onInput = debounce(() => { renderDataList(input.value); updateResult(input.value); }, 120);
+		input.addEventListener("input", onInput);
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") updateResult(input.value);
 		});
