@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Sovrattassa - Verifica luogo</title>
+	<style>
+		:root {
+			--bg: #0b1020;
+			--card: #121938;
+			--text: #e9ecf1;
+			--muted: #97a3b6;
+			--ok: #22c55e;
+			--warn: #f59e0b;
+		}
+
+		* { box-sizing: border-box; }
+		html, body { height: 100%; }
+		body {
+			margin: 0;
+			font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+			background: radial-gradient(1200px 600px at 20% -10%, #1c2552 0%, transparent 60%),
+				radial-gradient(900px 500px at 110% 10%, #22306a 0%, transparent 60%),
+				var(--bg);
+			color: var(--text);
+			display: grid;
+			place-items: center;
+			padding: 24px;
+		}
+
+		.container {
+			width: 100%;
+			max-width: 680px;
+			background: color-mix(in oklab, var(--card) 94%, #000 6%);
+			border: 1px solid rgba(255,255,255,0.08);
+			border-radius: 16px;
+			padding: 24px;
+			box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+		}
+
+		h1 {
+			margin: 0 0 8px;
+			font-size: 22px;
+		}
+
+		p.subtitle {
+			margin: 0 0 20px;
+			color: var(--muted);
+			font-size: 14px;
+		}
+
+		.field {
+			display: grid;
+			gap: 10px;
+			margin-bottom: 16px;
+		}
+
+		label { font-weight: 600; }
+
+		.input-row {
+			display: grid;
+			grid-template-columns: 1fr auto;
+			gap: 10px;
+		}
+
+		input[type="text"] {
+			width: 100%;
+			padding: 12px 14px;
+			border-radius: 10px;
+			border: 1px solid rgba(255,255,255,0.12);
+			background: rgba(255,255,255,0.06);
+			color: var(--text);
+			outline: none;
+		}
+
+		input[type="text"]::placeholder { color: #b9c2d3; }
+
+		button {
+			padding: 12px 16px;
+			border-radius: 10px;
+			border: 1px solid rgba(255,255,255,0.12);
+			background: #2d3a7a;
+			color: var(--text);
+			cursor: pointer;
+		}
+
+		.result {
+			margin-top: 12px;
+			padding: 14px;
+			border-radius: 12px;
+			background: rgba(255,255,255,0.04);
+			border: 1px solid rgba(255,255,255,0.08);
+			min-height: 46px;
+			display: block;
+			line-height: 1.4;
+		}
+
+		.badge { font-weight: 700; }
+		.badge.ok { color: var(--ok); }
+		.badge.warn { color: var(--warn); }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h1>Verifica sovrattassa</h1>
+		<p class="subtitle">Digita un luogo e scopri se è soggetto a sovrattassa.</p>
+		<p id="loadInfo" class="subtitle" style="margin-top:-8px"></p>
+
+		<div class="field">
+			<label for="placeInput">Luogo</label>
+			<div class="input-row">
+				<input id="placeInput" type="text" list="places" placeholder="Es. Napoli, Salerno, Roma..." autocomplete="off" />
+				<button id="checkBtn" type="button">Verifica</button>
+			</div>
+			<datalist id="places"></datalist>
+		</div>
+
+		<div id="result" class="result">Nessun luogo selezionato.</div>
+	</div>
+
+	<script>
+		// Stato applicazione
+		let SURCHARGES = [];
+		let PLACES = [];
+		let surchargeById = new Map();
+		let VISIBLE_SUGGESTIONS = [];
+
+		const input = document.getElementById("placeInput");
+		const dataList = document.getElementById("places");
+		const result = document.getElementById("result");
+		const checkBtn = document.getElementById("checkBtn");
+		const loadInfo = document.getElementById("loadInfo");
+
+		function normalize(str) {
+			return str.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
+		}
+
+		function renderDataList(filterTerm = "") {
+			const frag = document.createDocumentFragment();
+			const term = normalize(filterTerm);
+			let list = PLACES.slice().sort((a, b) => a.name.localeCompare(b.name, "it"));
+			if (term) {
+				const startsWith = [];
+				const contains = [];
+				for (const p of list) {
+					const n = normalize(p.name);
+					if (n.startsWith(term)) startsWith.push(p);
+					else if (n.includes(term)) contains.push(p);
+				}
+				list = [...startsWith, ...contains];
+			}
+			VISIBLE_SUGGESTIONS = list.slice(0, 100);
+			VISIBLE_SUGGESTIONS.forEach(p => {
+				const opt = document.createElement("option");
+				opt.value = p.name;
+				frag.appendChild(opt);
+			});
+			dataList.innerHTML = "";
+			dataList.appendChild(frag);
+		}
+
+		function findPlaceByName(name) {
+			const target = normalize(name);
+			if (!target) return null;
+			return PLACES.find(p => normalize(p.name) === target) || null;
+		}
+
+		function updateResult(placeName) {
+			const raw = (placeName || "");
+			const trimmed = raw.trim();
+			if (!trimmed) {
+				result.innerHTML = "Nessun luogo selezionato.";
+				return;
+			}
+			const match = findPlaceByName(trimmed);
+			if (!match) {
+				// Esente solo se non ci sono suggerimenti visibili per il testo inserito
+				if (VISIBLE_SUGGESTIONS.length === 0) {
+					const safe = trimmed.replace(/</g, "&lt;");
+					result.innerHTML = "<strong>" + safe + "</strong> non trovata nell'elenco, probabilmente è <span class=\"badge ok\">esente</span>.";
+				} else {
+					result.textContent = "Seleziona un luogo dall'elenco o continua a digitare.";
+				}
+				return;
+			}
+			const surcharge = surchargeById.get(match.surchargeId);
+			const isExempt = !surcharge || normalize(surcharge.label) === "esente";
+			if (isExempt) {
+				result.innerHTML = "<strong>" + match.name + "</strong> è <span class=\"badge ok\">esente</span>.";
+				return;
+			}
+			const label = surcharge.label || "Sovrattassa";
+			const desc = surcharge.description ? " - " + surcharge.description : "";
+			result.innerHTML = "In <strong>" + match.name + "</strong> si applica: <span class=\"badge warn\">" + label + "</span>" + desc + ".";
+		}
+
+		async function loadData() {
+			let usedFallback = false;
+			try {
+				const res = await fetch("data/sovrattasse.json", { cache: "no-store" });
+				if (!res.ok) throw new Error("HTTP " + res.status);
+				const data = await res.json();
+				SURCHARGES = Array.isArray(data.surcharges) ? data.surcharges : [];
+				PLACES = Array.isArray(data.places) ? data.places : [];
+			} catch (e) {
+				usedFallback = true;
+				console.warn("Caricamento JSON fallito, uso fallback:", e);
+				// Fallback locale minimale
+				SURCHARGES = [
+					{ id: "1", label: "stazione principale", description: "sovrattassa massima" },
+					{ id: "2", label: "5 euro", description: "Purtroppo solo 5 euro, meglio di niente" },
+					{ id: "3", label: "Esente", description: "Nessuna sovrattassa applicata." }
+				];
+				PLACES = [
+					{ name: "Aversa", surchargeId: "1" },
+					{ name: "Napoli Centrale", surchargeId: "1" },
+					{ name: "Salerno", surchargeId: "1" },
+					{ name: "Agropoli", surchargeId: "2" },
+					{ name: "Avellino", surchargeId: "2" },
+					{ name: "Vallo della Lucania", surchargeId: "2" }
+				];
+			}
+			surchargeById = new Map(SURCHARGES.map(s => [s.id, s]));
+			PLACES = PLACES.slice().sort((a, b) => a.name.localeCompare(b.name, "it"));
+			renderDataList("");
+		}
+
+		// Eventi
+		checkBtn.addEventListener("click", () => updateResult(input.value));
+		input.addEventListener("change", () => updateResult(input.value));
+		input.addEventListener("input", () => { renderDataList(input.value); updateResult(input.value); });
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") updateResult(input.value);
+		});
+
+		// Init
+		loadData();
+	</script>
+</body>
+</html>
